@@ -15,6 +15,8 @@
       --border: #e5e7eb;
       --danger: #dc2626;
       --badge-bg: #eff6ff;
+      --success-bg: #ecfdf5;
+      --success-text: #047857;
     }
 
     * { box-sizing: border-box; }
@@ -53,6 +55,13 @@
       font-size: 0.92rem;
     }
 
+    .top-controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+    }
+
     .month-control {
       display: flex;
       align-items: center;
@@ -67,6 +76,30 @@
       font-size: 0.85rem;
       color: var(--muted);
       font-weight: 600;
+    }
+
+    .admin-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--card);
+      padding: 8px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+    }
+
+    .admin-status {
+      font-size: 0.84rem;
+      font-weight: 700;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: #f3f4f6;
+      color: #4b5563;
+    }
+
+    .admin-status.unlocked {
+      background: var(--success-bg);
+      color: var(--success-text);
     }
 
     input[type="month"],
@@ -155,12 +188,60 @@
 
     .btn-primary:hover { background: var(--primary-hover); }
 
+    .btn-admin {
+      background: #111827;
+      color: #fff;
+      padding: 7px 12px;
+      font-size: 0.84rem;
+    }
+
+    .btn-admin:hover { background: #374151; }
+
+    .btn-download {
+      background: #ecfdf5;
+      color: #065f46;
+      border: 1px solid #a7f3d0;
+      padding: 8px 12px;
+      font-size: 0.84rem;
+    }
+
+    .btn-download:hover { background: #d1fae5; }
+
     .btn-danger-sm {
       background: #fee2e2;
       color: var(--danger);
       padding: 5px 10px;
       font-size: 0.8rem;
       border-radius: 6px;
+    }
+
+    .admin-only {
+      display: none;
+    }
+
+    body.admin-mode .admin-only {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    body.admin-mode .admin-only-block {
+      display: block;
+    }
+
+    .admin-only-block {
+      display: none;
+    }
+
+    .download-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+      padding: 10px 12px;
+      background: #f9fafb;
+      border: 1px dashed #d1d5db;
+      border-radius: 10px;
     }
 
     .summary-bar {
@@ -270,6 +351,7 @@
       transform: translateY(8px);
       transition: all 0.2s ease;
       pointer-events: none;
+      z-index: 999;
     }
 
     .status-toast.show {
@@ -285,9 +367,15 @@
         <h1>학급 알림장 &amp; 월별 지각 카운터</h1>
         <p>매일 지각 기록을 입력하면 선택한 월 기준으로 자동 집계됩니다.</p>
       </div>
-      <div class="month-control">
-        <label for="selectedMonth">조회 월</label>
-        <input type="month" id="selectedMonth" />
+      <div class="top-controls">
+        <div class="month-control">
+          <label for="selectedMonth">조회 월</label>
+          <input type="month" id="selectedMonth" />
+        </div>
+        <div class="admin-box">
+          <span id="adminBadge" class="admin-status">학생/보기 모드</span>
+          <button type="button" id="adminToggleBtn" class="btn-admin">관리자 잠금 해제</button>
+        </div>
       </div>
     </header>
 
@@ -321,6 +409,15 @@
       <!-- 월별 지각 집계 -->
       <section class="card">
         <h2>월별 지각 집계</h2>
+
+        <div class="admin-only-block">
+          <div class="download-bar">
+            <button type="button" id="downloadTardyCsvBtn" class="btn-download">
+              선택 월 지각 엑셀(CSV) 다운
+            </button>
+          </div>
+        </div>
+
         <div class="summary-bar">
           <span id="monthLabel">이번 달 총 지각</span>
           <span id="monthTotalCount">0회</span>
@@ -342,6 +439,15 @@
     <!-- 학급 알림장 -->
     <section class="card">
       <h2>학급 알림장</h2>
+
+      <div class="admin-only-block">
+        <div class="download-bar">
+          <button type="button" id="downloadNoticeCsvBtn" class="btn-download">
+            전체 알림장 엑셀(CSV) 다운
+          </button>
+        </div>
+      </div>
+
       <form id="noticeForm" style="margin-bottom: 20px;">
         <div class="row-2">
           <div class="field">
@@ -393,6 +499,9 @@
 };
     // ▲▲▲ 여기까지 교체 ▲▲▲
 
+    // 관리자 모드 비밀번호
+    const ADMIN_PIN = "1234";
+
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
@@ -418,7 +527,48 @@
     const noticeListEl = document.getElementById("noticeList");
     const toastEl = document.getElementById("toast");
 
+    const adminBadgeEl = document.getElementById("adminBadge");
+    const adminToggleBtn = document.getElementById("adminToggleBtn");
+    const downloadTardyCsvBtn = document.getElementById("downloadTardyCsvBtn");
+    const downloadNoticeCsvBtn = document.getElementById("downloadNoticeCsvBtn");
+
     let allTardyLogs = [];
+    let allNotices = [];
+    let isAdmin = false;
+
+    function syncAdminUI() {
+      document.body.classList.toggle("admin-mode", isAdmin);
+      if (isAdmin) {
+        adminBadgeEl.textContent = "관리자 모드 켜짐";
+        adminBadgeEl.classList.add("unlocked");
+        adminToggleBtn.textContent = "관리자 잠그기";
+      } else {
+        adminBadgeEl.textContent = "학생/보기 모드";
+        adminBadgeEl.classList.remove("unlocked");
+        adminToggleBtn.textContent = "관리자 잠금 해제";
+      }
+    }
+
+    adminToggleBtn.addEventListener("click", () => {
+      if (isAdmin) {
+        isAdmin = false;
+        syncAdminUI();
+        showToast("관리자 모드를 잠갔습니다.");
+        return;
+      }
+
+      const inputPin = prompt("관리자 비밀번호를 입력하세요.");
+      if (inputPin === null) return;
+      if (inputPin.trim() === ADMIN_PIN) {
+        isAdmin = true;
+        syncAdminUI();
+        showToast("관리자 모드가 해제되었습니다.");
+      } else {
+        showToast("비밀번호가 일치하지 않습니다.");
+      }
+    });
+
+    syncAdminUI();
 
     function getTodayString() {
       const now = new Date();
@@ -442,15 +592,35 @@
         .replace(/"/g, "&quot;");
     }
 
+    function csvCell(value) {
+      const text = String(value ?? "").replace(/"/g, '""');
+      return `"${text}"`;
+    }
+
+    function downloadCsv(filename, rows) {
+      if (!isAdmin) {
+        showToast("관리자 모드에서만 다운로드할 수 있습니다.");
+        return;
+      }
+      const csvContent = "\uFEFF" + rows.map((r) => r.map(csvCell).join(",")).join("\r\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast(`${filename} 다운로드를 시작했습니다.`);
+    }
+
     const today = getTodayString();
     tardyDateEl.value = today;
     noticeDateEl.value = today;
     selectedMonthEl.value = today.slice(0, 7);
 
-    function renderMonthlyTardy() {
-      const month = selectedMonthEl.value || today.slice(0, 7);
-      monthLabelEl.textContent = `${month} 총 지각`;
-
+    function getMonthlyTardyData(month) {
       const filtered = allTardyLogs.filter((item) => (item.date || "").startsWith(month));
       const studentMap = new Map();
       let totalCount = 0;
@@ -462,9 +632,17 @@
         studentMap.set(name, (studentMap.get(name) || 0) + count);
       }
 
+      const sortedStudents = [...studentMap.entries()].sort((a, b) => b[1] - a[1]);
+      return { filtered, totalCount, sortedStudents };
+    }
+
+    function renderMonthlyTardy() {
+      const month = selectedMonthEl.value || today.slice(0, 7);
+      monthLabelEl.textContent = `${month} 총 지각`;
+
+      const { filtered, totalCount, sortedStudents } = getMonthlyTardyData(month);
       monthTotalCountEl.textContent = `${totalCount}회`;
 
-      const sortedStudents = [...studentMap.entries()].sort((a, b) => b[1] - a[1]);
       if (sortedStudents.length === 0) {
         studentSummaryListEl.innerHTML = `<li class="empty">${month} 지각 기록이 없습니다.</li>`;
       } else {
@@ -491,12 +669,64 @@
                 <span class="count-badge" style="margin-left:4px;">+${Number(item.count) || 1}</span>
                 <div class="log-meta">${escapeHtml(item.date)}${item.memo ? " · " + escapeHtml(item.memo) : ""}</div>
               </div>
-              <button type="button" class="btn-danger-sm" data-del-tardy="${item.id}">삭제</button>
+              <button type="button" class="btn-danger-sm admin-only" data-del-tardy="${item.id}">삭제</button>
             </div>`
           )
           .join("");
       }
     }
+
+    function renderNotices() {
+      if (allNotices.length === 0) {
+        noticeListEl.innerHTML = `<div class="empty">등록된 알림장이 없습니다.</div>`;
+        return;
+      }
+
+      noticeListEl.innerHTML = allNotices
+        .map(
+          (n) => `
+          <article class="notice-item">
+            <div class="notice-header">
+              <div>
+                <span class="notice-date">${escapeHtml(n.date)}</span>
+                ${n.title ? `<strong style="margin-left:8px;">${escapeHtml(n.title)}</strong>` : ""}
+              </div>
+              <button type="button" class="btn-danger-sm admin-only" data-del-notice="${n.id}">삭제</button>
+            </div>
+            <p class="notice-content">${escapeHtml(n.content)}</p>
+          </article>`
+        )
+        .join("");
+    }
+
+    downloadTardyCsvBtn.addEventListener("click", () => {
+      const month = selectedMonthEl.value || today.slice(0, 7);
+      const { filtered, sortedStudents } = getMonthlyTardyData(month);
+
+      const rows = [
+        ["구분", "조회월", "날짜", "학생", "지각횟수", "비고"],
+        ...sortedStudents.map(([name, count]) => ["월별집계", month, "", name, count, ""]),
+        ...filtered.map((item) => [
+          "상세기록",
+          month,
+          item.date || "",
+          item.studentName || "",
+          Number(item.count) || 1,
+          item.memo || ""
+        ])
+      ];
+
+      downloadCsv(`${month}_지각기록.csv`, rows);
+    });
+
+    downloadNoticeCsvBtn.addEventListener("click", () => {
+      const rows = [
+        ["날짜", "제목/준비물요약", "알림장내용"],
+        ...allNotices.map((n) => [n.date || "", n.title || "", n.content || ""])
+      ];
+
+      downloadCsv(`학급_알림장_${today}.csv`, rows);
+    });
 
     selectedMonthEl.addEventListener("change", renderMonthlyTardy);
 
@@ -531,6 +761,10 @@
     monthlyLogListEl.addEventListener("click", async (e) => {
       const id = e.target.getAttribute("data-del-tardy");
       if (!id) return;
+      if (!isAdmin) {
+        showToast("관리자 모드에서만 삭제할 수 있습니다.");
+        return;
+      }
       try {
         await deleteDoc(doc(db, "tardy_logs", id));
         showToast("지각 기록을 삭제했습니다.");
@@ -566,6 +800,10 @@
     noticeListEl.addEventListener("click", async (e) => {
       const id = e.target.getAttribute("data-del-notice");
       if (!id) return;
+      if (!isAdmin) {
+        showToast("관리자 모드에서만 삭제할 수 있습니다.");
+        return;
+      }
       try {
         await deleteDoc(doc(db, "notices", id));
         showToast("알림장을 삭제했습니다.");
@@ -590,26 +828,8 @@
     onSnapshot(
       query(noticeCol, orderBy("date", "desc")),
       (snapshot) => {
-        const notices = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-        if (notices.length === 0) {
-          noticeListEl.innerHTML = `<div class="empty">등록된 알림장이 없습니다.</div>`;
-          return;
-        }
-        noticeListEl.innerHTML = notices
-          .map(
-            (n) => `
-            <article class="notice-item">
-              <div class="notice-header">
-                <div>
-                  <span class="notice-date">${escapeHtml(n.date)}</span>
-                  ${n.title ? `<strong style="margin-left:8px;">${escapeHtml(n.title)}</strong>` : ""}
-                </div>
-                <button type="button" class="btn-danger-sm" data-del-notice="${n.id}">삭제</button>
-              </div>
-              <p class="notice-content">${escapeHtml(n.content)}</p>
-            </article>`
-          )
-          .join("");
+        allNotices = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        renderNotices();
       },
       (err) => {
         console.error(err);
